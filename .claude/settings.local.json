@@ -3,7 +3,12 @@
     "allow": [
       "Bash(git --version)",
       "Bash(gh:*)",
-      "Bash(git init:*)"
+      "Bash(git init:*)",
+      "Bash(clear)",
+      "Bash(flutter pub:*)",
+      "Bash(flutter:*)",
+      "Bash(where adb)",
+      "Bash(adb -s R5CT22F7NXK install -r build/app/outputs/flutter-apk/app-debug.apk)"
     ],
     "deny": [],
     "ask": []

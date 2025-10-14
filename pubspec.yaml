@@ -56,6 +56,10 @@ dependencies:
   vector_math: ^2.1.4
   image: ^4.3.0  # For image cropping
 
+  # Bluetooth
+  flutter_blue_plus: ^1.32.12
+  shared_preferences: ^2.3.2  # For saving last connected device
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

@@ -7,7 +7,10 @@ import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import '../services/person_detector.dart';
 import '../services/distance_estimator.dart';
 import '../services/image_cropper.dart';
+import '../services/multi_device_bluetooth_service.dart';
 import '../widgets/alert_overlay.dart';
+import '../widgets/device_grid_widget.dart';
+import '../screens/multi_device_bluetooth_settings_screen.dart';
 
 enum AlertLevel {
   none,
@@ -36,6 +39,7 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
   double? _detectedDistance;
   int _frameCount = 0;
   DateTime? _lastFpsUpdate;
+  DateTime? _lastProcessedFrame;  // Track last processed frame time for throttling
   double _currentFps = 0.0;
   String? _lastDetectedImagePath;  // 마지막 감지된 이미지 경로
 
@@ -44,18 +48,25 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
   int _consecutiveNonDetections = 0;
   static const int _requiredConsecutiveDetections = 2;  // Need 2 frames in a row
   static const int _requiredConsecutiveNonDetections = 2;  // Need 2 frames without detection to clear
+  static const Duration _processingInterval = Duration(milliseconds: 1000);  // Process 1 frame per second
 
   @override
   void initState() {
     super.initState();
     _initializeCamera();
     _initializeDetectors();
+    _initializeBluetooth();
+  }
+
+  Future<void> _initializeBluetooth() async {
+    final bluetoothService = MultiDeviceBluetoothService();
+    await bluetoothService.initialize();
   }
 
   Future<void> _initializeCamera() async {
     _cameraController = CameraController(
       widget.camera,
-      ResolutionPreset.medium,
+      ResolutionPreset.low,  // Low resolution for better performance
       enableAudio: false,
     );
 
@@ -66,15 +77,17 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
         setState(() {
           _isInitialized = true;
           _lastFpsUpdate = DateTime.now();
+          _lastProcessedFrame = DateTime.now();
         });
 
-        // Start periodic capture (2 FPS for better performance)
-        Timer.periodic(const Duration(milliseconds: 500), (timer) {
+        // Start periodic capture (1 FPS for stable performance)
+        // Using longer intervals to reduce impact on preview smoothness
+        Timer.periodic(const Duration(milliseconds: 1500), (timer) {
           if (!mounted) {
             timer.cancel();
             return;
           }
-          _captureAndProcess();
+          _captureAndProcessAsync();
         });
       }
     } catch (e) {
@@ -82,52 +95,43 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
     }
   }
 
-  Future<void> _captureAndProcess() async {
+  /// Capture and process frame asynchronously with minimal UI blocking
+  Future<void> _captureAndProcessAsync() async {
+    // Skip if already processing
     if (_isProcessing || _cameraController == null || !_cameraController!.value.isInitialized) {
       return;
     }
 
     _isProcessing = true;
+    final now = DateTime.now();
     _frameCount++;
 
-    // Update FPS
-    final now = DateTime.now();
+    // Update FPS counter
     if (_lastFpsUpdate != null) {
       final elapsed = now.difference(_lastFpsUpdate!).inMilliseconds;
       if (elapsed >= 1000) {
         _currentFps = _frameCount / (elapsed / 1000);
         _frameCount = 0;
         _lastFpsUpdate = now;
-        debugPrint('📊 FPS: ${_currentFps.toStringAsFixed(1)}');
+        debugPrint('📊 Detection rate: ${_currentFps.toStringAsFixed(1)}/sec');
       }
     }
 
     try {
-      debugPrint('📸 Taking picture...');
-      final startTime = DateTime.now();
+      // Take picture - this is the blocking part (~300-500ms)
       final image = await _cameraController!.takePicture();
-      final captureTime = DateTime.now().difference(startTime).inMilliseconds;
-      debugPrint('✅ Picture taken in ${captureTime}ms: ${image.path}');
-
       final inputImage = InputImage.fromFilePath(image.path);
-      debugPrint('🖼️ InputImage created from: ${image.path}');
 
-      final detectionStartTime = DateTime.now();
+      // Run ML detection
       final detections = await _personDetector!.detectPerson(inputImage);
-      final detectionTime = DateTime.now().difference(detectionStartTime).inMilliseconds;
-      debugPrint('⏱️ Detection took ${detectionTime}ms');
 
       if (detections.isNotEmpty) {
-        debugPrint('🎯 Processing ${detections.length} person detection(s)');
-
-        // Validate pose to reduce false positives
+        // Validate pose
         final pose = detections.first;
         if (!_imageCropper!.isValidPose(pose)) {
-          debugPrint('⚠️ Pose validation failed - likely false positive');
           _consecutiveDetections = 0;
           _consecutiveNonDetections++;
 
-          // Clear alert only after consecutive non-detections
           if (_consecutiveNonDetections >= _requiredConsecutiveNonDetections) {
             if (mounted) {
               setState(() {
@@ -139,39 +143,28 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
           return;
         }
 
-        // Valid detection found - increment consecutive counter
+        // Valid detection
         _consecutiveDetections++;
         _consecutiveNonDetections = 0;
-        debugPrint('📊 Consecutive detections: $_consecutiveDetections/$_requiredConsecutiveDetections');
 
         final distance = await _distanceEstimator!.estimateDistance(
           pose,
           _cameraController!,
         );
-        debugPrint('📏 Estimated distance: ${distance.toStringAsFixed(2)}m');
 
-        // Crop image to show only the detected person
-        final croppedPath = await _imageCropper!.cropToPerson(image.path, pose);
-
-        // Only trigger alert after consecutive detections
+        // Update UI after consecutive detections
         if (_consecutiveDetections >= _requiredConsecutiveDetections) {
-          debugPrint('✅ Confirmed person after $_consecutiveDetections consecutive frames');
           if (mounted) {
             setState(() {
               _detectedDistance = distance;
-              _lastDetectedImagePath = croppedPath ?? image.path;  // Use cropped image or fallback to original
               _updateAlertLevel(distance);
             });
           }
-        } else {
-          debugPrint('⏳ Waiting for more consecutive detections before alerting...');
         }
       } else {
-        debugPrint('⚠️ No person detections');
         _consecutiveDetections = 0;
         _consecutiveNonDetections++;
 
-        // Clear alert only after consecutive non-detections
         if (_consecutiveNonDetections >= _requiredConsecutiveNonDetections) {
           if (mounted) {
             setState(() {
@@ -184,8 +177,6 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
     } catch (e) {
       debugPrint('❌ Error processing frame: $e');
     } finally {
-      final totalTime = DateTime.now().difference(now).inMilliseconds;
-      debugPrint('⏱️ Total processing time: ${totalTime}ms');
       _isProcessing = false;
     }
   }
@@ -250,9 +241,36 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
             distance: _detectedDistance,
           ),
 
-          // Debug info
+          // Device grid at top
           Positioned(
             top: 50,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: GestureDetector(
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const MultiDeviceBluetoothSettingsScreen(),
+                    ),
+                  );
+                },
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.black54,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const CompactDeviceGrid(dotSize: 35),
+                ),
+              ),
+            ),
+          ),
+
+          // Debug info
+          Positioned(
+            top: 180,
             left: 16,
             child: Container(
               padding: const EdgeInsets.all(12),
@@ -264,7 +282,7 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'FPS: ${_currentFps.toStringAsFixed(1)}',
+                    'Detection: ${_currentFps.toStringAsFixed(1)}/sec',
                     style: const TextStyle(color: Colors.white, fontSize: 12),
                   ),
                   if (_detectedDistance != null)
@@ -277,42 +295,8 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
             ),
           ),
 
-          // 오른쪽 위 - 감지된 사람 이미지
-          if (_lastDetectedImagePath != null)
-            Positioned(
-              top: 50,
-              right: 16,
-              child: Container(
-                width: 200,
-                height: 200,
-                decoration: BoxDecoration(
-                  border: Border.all(
-                    color: _currentAlert == AlertLevel.warning3m
-                        ? Colors.red
-                        : _currentAlert == AlertLevel.warning5m
-                            ? Colors.orange
-                            : Colors.white,
-                    width: 3,
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Image.file(
-                    File(_lastDetectedImagePath!),
-                    fit: BoxFit.cover,
-                    errorBuilder: (context, error, stackTrace) {
-                      return Container(
-                        color: Colors.black54,
-                        child: const Center(
-                          child: Icon(Icons.error, color: Colors.white),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ),
-            ),
+          // Note: Image display removed for performance when using image stream
+          // Image capture from stream can be added later if needed
         ],
       ),
     );
