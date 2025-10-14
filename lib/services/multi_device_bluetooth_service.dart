@@ -19,6 +19,12 @@ class MultiDeviceBluetoothService extends ChangeNotifier {
   // Map of device ID to connection state subscriptions
   final Map<String, StreamSubscription<BluetoothConnectionState>> _connectionSubscriptions = {};
 
+  // Auto-reconnection state
+  final Map<String, Timer?> _reconnectionTimers = {};
+  final Map<String, int> _reconnectionAttempts = {};
+  static const int _maxReconnectionAttempts = 3;
+  static const Duration _reconnectionDelay = Duration(seconds: 5);
+
   // Scanning state
   bool _isScanning = false;
   List<ScanResult> _scanResults = [];
@@ -285,13 +291,76 @@ class MultiDeviceBluetoothService extends ChangeNotifier {
   void _onConnectionStateChanged(int row, int col, BluetoothConnectionState state) {
     final index = row * 2 + col;
     if (index >= 0 && index < _devicePositions.length) {
-      _devicePositions[index] = _devicePositions[index].copyWith(
+      final position = _devicePositions[index];
+
+      _devicePositions[index] = position.copyWith(
         connectionState: state,
       );
 
-      debugPrint('Connection state changed for ${_devicePositions[index].positionLabel}: $state');
+      debugPrint('🔄 Connection state changed for ${position.positionLabel}: $state');
+
+      // Handle disconnection - trigger auto-reconnection
+      if (state == BluetoothConnectionState.disconnected && position.deviceId != null) {
+        debugPrint('❌ Device disconnected from ${position.positionLabel}');
+        _startAutoReconnection(row, col, position);
+      } else if (state == BluetoothConnectionState.connected) {
+        // Connection successful - reset reconnection attempts
+        if (position.deviceId != null) {
+          _reconnectionAttempts[position.deviceId!] = 0;
+          _reconnectionTimers[position.deviceId!]?.cancel();
+          _reconnectionTimers[position.deviceId!] = null;
+          debugPrint('✅ Device connected to ${position.positionLabel} - reconnection attempts reset');
+        }
+      }
+
       notifyListeners();
     }
+  }
+
+  /// Start auto-reconnection for a disconnected device
+  void _startAutoReconnection(int row, int col, DevicePosition position) {
+    if (position.deviceId == null || position.device == null) {
+      debugPrint('⚠️  Cannot auto-reconnect: no device info available');
+      return;
+    }
+
+    final deviceId = position.deviceId!;
+    final currentAttempts = _reconnectionAttempts[deviceId] ?? 0;
+
+    if (currentAttempts >= _maxReconnectionAttempts) {
+      debugPrint('❌ Max reconnection attempts ($currentAttempts/$_maxReconnectionAttempts) reached for ${position.positionLabel}');
+      debugPrint('   Please manually reconnect the device');
+      _reconnectionAttempts[deviceId] = 0; // Reset for next time
+      return;
+    }
+
+    // Cancel any existing reconnection timer
+    _reconnectionTimers[deviceId]?.cancel();
+
+    debugPrint('🔄 Scheduling auto-reconnection for ${position.positionLabel}');
+    debugPrint('   Attempt ${currentAttempts + 1}/$_maxReconnectionAttempts');
+    debugPrint('   Waiting ${_reconnectionDelay.inSeconds} seconds...');
+
+    _reconnectionTimers[deviceId] = Timer(_reconnectionDelay, () async {
+      _reconnectionAttempts[deviceId] = currentAttempts + 1;
+
+      debugPrint('🔄 Attempting auto-reconnection for ${position.positionLabel}');
+      debugPrint('   Attempt ${_reconnectionAttempts[deviceId]}/$_maxReconnectionAttempts');
+
+      try {
+        final success = await connectDeviceToPosition(position.device!, row, col);
+
+        if (success) {
+          debugPrint('✅ Auto-reconnection successful for ${position.positionLabel}');
+          _reconnectionAttempts[deviceId] = 0; // Reset on success
+        } else {
+          debugPrint('❌ Auto-reconnection failed for ${position.positionLabel}');
+          // Will try again if attempts < max (handled by state change listener)
+        }
+      } catch (e) {
+        debugPrint('❌ Auto-reconnection error for ${position.positionLabel}: $e');
+      }
+    });
   }
 
   /// Disconnect device at specific position
@@ -305,6 +374,14 @@ class MultiDeviceBluetoothService extends ChangeNotifier {
       debugPrint('🔌 Disconnecting device at ${position.positionLabel}');
       debugPrint('   Device ID: ${position.deviceId}');
       debugPrint('   Device Name: ${position.deviceName}');
+
+      // Cancel reconnection timer and reset attempts
+      if (position.deviceId != null) {
+        _reconnectionTimers[position.deviceId]?.cancel();
+        _reconnectionTimers.remove(position.deviceId);
+        _reconnectionAttempts.remove(position.deviceId);
+        debugPrint('   Canceled auto-reconnection timer');
+      }
 
       // Cancel subscription FIRST to prevent state change notifications during disconnect
       if (position.deviceId != null) {
@@ -403,31 +480,88 @@ class MultiDeviceBluetoothService extends ChangeNotifier {
   /// Send LED blink command to all connected devices
   /// blinkInterval: 0 = off, 1 = slow (1s), 2 = fast (0.5s)
   Future<void> sendLEDBlinkToAll(int blinkInterval) async {
-    debugPrint('💡 Sending LED blink command: $blinkInterval to all devices');
+    // TeslaGuard BLE service and characteristic UUIDs
+    const serviceUuid = '4fafc201-1fb5-459e-8fcc-c5c9c331914b';
+    const characteristicUuid = 'beb5483e-36e1-4688-b7f5-ea07361b26a8';
+
+    final timestamp = DateTime.now().toIso8601String();
+    debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    debugPrint('💡 [$timestamp] LED COMMAND SEND REQUEST');
+    debugPrint('   Command: $blinkInterval (0=OFF, 1=SLOW, 2=FAST)');
+    debugPrint('   Connected devices: ${connectedDevices.length}');
+
+    if (connectedDevices.isEmpty) {
+      debugPrint('⚠️  No devices connected - command not sent');
+      debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+      return;
+    }
+
+    int successCount = 0;
+    int failCount = 0;
 
     for (var position in connectedDevices) {
       try {
         if (position.device != null && position.isConnected) {
+          debugPrint('📤 Sending to: ${position.positionLabel} (${position.deviceName})');
+
           // Command format: [0xFF, blinkInterval]
           // 0xFF is a marker to distinguish from alert commands
           final data = [0xFF, blinkInterval];
+          debugPrint('   Data bytes: [0x${data[0].toRadixString(16).toUpperCase()}, 0x${data[1].toRadixString(16).toUpperCase()}]');
 
           final services = await position.device!.discoverServices();
+          debugPrint('   Discovered ${services.length} services');
 
+          bool commandSent = false;
           for (var service in services) {
-            for (var characteristic in service.characteristics) {
-              if (characteristic.properties.write) {
-                await characteristic.write(data);
-                debugPrint('✅ Sent LED blink $blinkInterval to ${position.positionLabel}');
-                break;
+            debugPrint('   Service UUID: ${service.uuid}');
+
+            // Only use our custom TeslaGuard service
+            if (service.uuid.toString().toLowerCase() == serviceUuid.toLowerCase()) {
+              debugPrint('   ✅ Found TeslaGuard service!');
+
+              for (var characteristic in service.characteristics) {
+                debugPrint('      Characteristic UUID: ${characteristic.uuid}');
+
+                // Find our custom characteristic
+                if (characteristic.uuid.toString().toLowerCase() == characteristicUuid.toLowerCase()) {
+                  debugPrint('      ✅ Found TeslaGuard characteristic!');
+
+                  if (characteristic.properties.write) {
+                    debugPrint('      ✓ Characteristic is writable');
+
+                    await characteristic.write(data, withoutResponse: false);
+
+                    debugPrint('   ✅ SUCCESS: Command sent to ${position.positionLabel}');
+                    successCount++;
+                    commandSent = true;
+                    break;
+                  } else {
+                    debugPrint('      ❌ Characteristic is not writable');
+                  }
+                }
               }
             }
+            if (commandSent) break;
           }
+
+          if (!commandSent) {
+            debugPrint('   ❌ FAIL: TeslaGuard service or characteristic not found');
+            failCount++;
+          }
+        } else {
+          debugPrint('❌ Device at ${position.positionLabel} is not properly connected');
+          failCount++;
         }
       } catch (e) {
-        debugPrint('❌ Error sending LED command to ${position.positionLabel}: $e');
+        debugPrint('❌ ERROR sending to ${position.positionLabel}: $e');
+        failCount++;
       }
     }
+
+    debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    debugPrint('📊 SUMMARY: Success: $successCount, Failed: $failCount, Total: ${connectedDevices.length}');
+    debugPrint('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   }
 
   /// Subscribe to proximity data from device
@@ -497,6 +631,13 @@ class MultiDeviceBluetoothService extends ChangeNotifier {
 
   @override
   void dispose() {
+    // Cancel all reconnection timers
+    for (var timer in _reconnectionTimers.values) {
+      timer?.cancel();
+    }
+    _reconnectionTimers.clear();
+    _reconnectionAttempts.clear();
+
     disconnectAll();
     _scanSubscription?.cancel();
     super.dispose();

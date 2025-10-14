@@ -51,6 +51,11 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
   static const int _requiredConsecutiveNonDetections = 2;  // Need 2 frames without detection to clear
   static const Duration _processingInterval = Duration(milliseconds: 1000);  // Process 1 frame per second
 
+  // Auto-off timer: turn off alert if no detection for 10 seconds
+  DateTime? _lastDetectionTime;
+  static const Duration _autoOffDuration = Duration(seconds: 10);
+  Timer? _autoOffCheckTimer;
+
   // Alert timer for sound and LED
   Timer? _alertTimer;
   final _bluetoothService = MultiDeviceBluetoothService();
@@ -61,6 +66,31 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
     _initializeCamera();
     _initializeDetectors();
     _initializeBluetooth();
+    _startAutoOffCheckTimer();
+  }
+
+  /// Start timer to check for auto-off (10 seconds without detection)
+  void _startAutoOffCheckTimer() {
+    _autoOffCheckTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (_lastDetectionTime != null && _currentAlert != AlertLevel.none) {
+        final timeSinceLastDetection = DateTime.now().difference(_lastDetectionTime!);
+
+        if (timeSinceLastDetection >= _autoOffDuration) {
+          debugPrint('⏰ No detection for ${_autoOffDuration.inSeconds}s - turning off alert');
+
+          if (mounted) {
+            setState(() {
+              _detectedDistance = null;
+              _currentAlert = AlertLevel.none;
+              _lastDetectedImagePath = null;
+            });
+          }
+
+          _stopAlertTimer();
+          _lastDetectionTime = null;
+        }
+      }
+    });
   }
 
   Future<void> _initializeBluetooth() async {
@@ -163,6 +193,9 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
 
         // Update UI after consecutive detections
         if (_consecutiveDetections >= _requiredConsecutiveDetections) {
+          // Update last detection time for auto-off timer
+          _lastDetectionTime = DateTime.now();
+
           if (mounted) {
             setState(() {
               _detectedDistance = distance;
@@ -283,6 +316,7 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
   @override
   void dispose() {
     _stopAlertTimer();
+    _autoOffCheckTimer?.cancel();
     _cameraController?.dispose();
     _personDetector?.dispose();
     _distanceEstimator?.dispose();
@@ -365,6 +399,69 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
                       'Distance: ${_detectedDistance!.toStringAsFixed(2)}m',
                       style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
                     ),
+                ],
+              ),
+            ),
+          ),
+
+          // LED Test buttons - bottom left
+          Positioned(
+            bottom: 50,
+            left: 16,
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.black87,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.blue, width: 2),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'LED Test',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ElevatedButton(
+                    onPressed: () {
+                      debugPrint('🔵 TEST: Sending LED OFF command');
+                      _bluetoothService.sendLEDBlinkToAll(0);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.grey,
+                      minimumSize: const Size(80, 36),
+                    ),
+                    child: const Text('OFF', style: TextStyle(fontSize: 12)),
+                  ),
+                  const SizedBox(height: 4),
+                  ElevatedButton(
+                    onPressed: () {
+                      debugPrint('🟠 TEST: Sending LED SLOW command');
+                      _bluetoothService.sendLEDBlinkToAll(1);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange,
+                      minimumSize: const Size(80, 36),
+                    ),
+                    child: const Text('SLOW', style: TextStyle(fontSize: 12)),
+                  ),
+                  const SizedBox(height: 4),
+                  ElevatedButton(
+                    onPressed: () {
+                      debugPrint('🔴 TEST: Sending LED FAST command');
+                      _bluetoothService.sendLEDBlinkToAll(2);
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.red,
+                      minimumSize: const Size(80, 36),
+                    ),
+                    child: const Text('FAST', style: TextStyle(fontSize: 12)),
+                  ),
                 ],
               ),
             ),

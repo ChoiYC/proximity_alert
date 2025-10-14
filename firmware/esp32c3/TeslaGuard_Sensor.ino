@@ -21,6 +21,7 @@ bool oldDeviceConnected = false;
 int ledBlinkMode = 0;  // 0=off, 1=slow(1s), 2=fast(0.5s)
 unsigned long lastBlinkTime = 0;
 bool ledState = false;
+int currentLedIndex = 0;  // For sequential LED pattern (0, 1, 2)
 
 // Connection callbacks
 class MyServerCallbacks: public BLEServerCallbacks {
@@ -42,6 +43,7 @@ class MyServerCallbacks: public BLEServerCallbacks {
       digitalWrite(LED2_PIN, LOW);
       digitalWrite(LED3_PIN, LOW);
       ledBlinkMode = 0;
+      currentLedIndex = 0;  // Reset sequential index
     }
 };
 
@@ -50,12 +52,33 @@ class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
       std::string value = pCharacteristic->getValue();
 
+      Serial.println("========================================");
+      Serial.print("📥 BLE Data Received: ");
+      Serial.print(value.length());
+      Serial.println(" bytes");
+
+      // Print raw bytes in hex
+      Serial.print("   Raw data: ");
+      for (int i = 0; i < value.length(); i++) {
+        Serial.print("0x");
+        if ((uint8_t)value[i] < 0x10) Serial.print("0");
+        Serial.print((uint8_t)value[i], HEX);
+        if (i < value.length() - 1) Serial.print(" ");
+      }
+      Serial.println();
+
       if (value.length() >= 2) {
         // Check for LED command marker (0xFF)
         if ((uint8_t)value[0] == 0xFF) {
           ledBlinkMode = (uint8_t)value[1];
 
-          Serial.print("💡 LED Command Received: ");
+          Serial.println("🔍 Command Type: LED CONTROL");
+          Serial.print("   Marker: 0x");
+          Serial.println((uint8_t)value[0], HEX);
+          Serial.print("   Mode: ");
+          Serial.print(ledBlinkMode);
+          Serial.print(" - ");
+
           if (ledBlinkMode == 0) {
             Serial.println("OFF");
             // Turn off all LEDs immediately
@@ -63,23 +86,37 @@ class MyCallbacks: public BLECharacteristicCallbacks {
             digitalWrite(LED2_PIN, LOW);
             digitalWrite(LED3_PIN, LOW);
             ledState = false;
+            currentLedIndex = 0;  // Reset sequential index
+            Serial.println("   ✅ LEDs turned OFF");
           } else if (ledBlinkMode == 1) {
-            Serial.println("SLOW (1s interval)");
+            Serial.println("SLOW (1s interval) - Sequential");
+            currentLedIndex = 0;  // Reset sequential index
+            Serial.println("   ✅ LED blink mode set to SLOW (LED1 → LED2 → LED3)");
           } else if (ledBlinkMode == 2) {
-            Serial.println("FAST (0.5s interval)");
+            Serial.println("FAST (0.5s interval) - All Together");
+            Serial.println("   ✅ LED blink mode set to FAST (All LEDs blink)");
+          } else {
+            Serial.print("UNKNOWN (");
+            Serial.print(ledBlinkMode);
+            Serial.println(")");
+            Serial.println("   ⚠️  Invalid mode value");
           }
 
           lastBlinkTime = millis();
         } else {
           // Other commands (future use)
-          Serial.print("📩 Received: ");
+          Serial.println("🔍 Command Type: OTHER");
+          Serial.print("   Data: ");
           for (int i = 0; i < value.length(); i++) {
             Serial.print((uint8_t)value[i], HEX);
             Serial.print(" ");
           }
           Serial.println();
         }
+      } else {
+        Serial.println("⚠️  Invalid data length (need at least 2 bytes)");
       }
+      Serial.println("========================================");
     }
 };
 
@@ -152,6 +189,27 @@ void setup() {
   Serial.println("========================================");
   Serial.println("💡 LED Pins: GPIO2, GPIO3, GPIO4");
   Serial.println("========================================");
+
+  // LED hardware test
+  Serial.println("🧪 Testing LED hardware...");
+  Serial.println("   Turning all LEDs ON for 2 seconds...");
+  digitalWrite(LED1_PIN, HIGH);
+  digitalWrite(LED2_PIN, HIGH);
+  digitalWrite(LED3_PIN, HIGH);
+  delay(2000);
+
+  Serial.println("   Turning all LEDs OFF...");
+  digitalWrite(LED1_PIN, LOW);
+  digitalWrite(LED2_PIN, LOW);
+  digitalWrite(LED3_PIN, LOW);
+  delay(500);
+
+  Serial.println("✅ LED hardware test complete!");
+  Serial.println("   If LEDs didn't light up, check:");
+  Serial.println("   1. LED polarity (long leg = +, short leg = -)");
+  Serial.println("   2. Resistor (220Ω-1kΩ) in series with each LED");
+  Serial.println("   3. GND connection to ESP32C3 GND pin");
+  Serial.println("========================================");
   Serial.println("⏳ Waiting for connection from app...");
   Serial.println("========================================");
 }
@@ -165,23 +223,57 @@ void updateLEDs() {
   // Determine blink interval
   unsigned long blinkInterval = (ledBlinkMode == 1) ? 1000 : 500;  // 1s or 0.5s
 
-  // Check if it's time to toggle
+  // Check if it's time to toggle/switch
   if (millis() - lastBlinkTime >= blinkInterval) {
-    ledState = !ledState;
+    if (ledBlinkMode == 1) {
+      // Mode 1: SLOW - Sequential pattern (3m+)
+      // Turn off all LEDs first
+      digitalWrite(LED1_PIN, LOW);
+      digitalWrite(LED2_PIN, LOW);
+      digitalWrite(LED3_PIN, LOW);
 
-    // Update all 3 LEDs
-    digitalWrite(LED1_PIN, ledState ? HIGH : LOW);
-    digitalWrite(LED2_PIN, ledState ? HIGH : LOW);
-    digitalWrite(LED3_PIN, ledState ? HIGH : LOW);
+      // Turn on current LED
+      if (currentLedIndex == 0) {
+        digitalWrite(LED1_PIN, HIGH);
+      } else if (currentLedIndex == 1) {
+        digitalWrite(LED2_PIN, HIGH);
+      } else if (currentLedIndex == 2) {
+        digitalWrite(LED3_PIN, HIGH);
+      }
+
+      // Move to next LED
+      currentLedIndex = (currentLedIndex + 1) % 3;
+
+      // Debug output
+      unsigned long currentTime = millis();
+      Serial.print("[");
+      Serial.print(currentTime / 1000);
+      Serial.print(".");
+      Serial.print(currentTime % 1000);
+      Serial.print("s] 💡 LED Sequential: LED");
+      Serial.print(currentLedIndex == 0 ? 3 : currentLedIndex);  // Show which LED just turned on
+      Serial.println(" ON");
+
+    } else if (ledBlinkMode == 2) {
+      // Mode 2: FAST - All LEDs blink together (3m-)
+      ledState = !ledState;
+
+      // Toggle all 3 LEDs simultaneously
+      digitalWrite(LED1_PIN, ledState ? HIGH : LOW);
+      digitalWrite(LED2_PIN, ledState ? HIGH : LOW);
+      digitalWrite(LED3_PIN, ledState ? HIGH : LOW);
+
+      // Debug output
+      unsigned long currentTime = millis();
+      Serial.print("[");
+      Serial.print(currentTime / 1000);
+      Serial.print(".");
+      Serial.print(currentTime % 1000);
+      Serial.print("s] 💡 All LEDs: ");
+      Serial.println(ledState ? "ON (FAST)" : "OFF");
+    }
 
     lastBlinkTime = millis();
-
-    // Debug output
-    if (ledState) {
-      Serial.println("💡 LEDs ON");
-    } else {
-      Serial.println("💡 LEDs OFF");
-    }
   }
 }
 
