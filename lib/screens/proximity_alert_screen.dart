@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:camera/camera.dart';
 import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
+import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
 import '../services/person_detector.dart';
 import '../services/distance_estimator.dart';
 import '../services/image_cropper.dart';
@@ -49,6 +50,10 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
   static const int _requiredConsecutiveDetections = 2;  // Need 2 frames in a row
   static const int _requiredConsecutiveNonDetections = 2;  // Need 2 frames without detection to clear
   static const Duration _processingInterval = Duration(milliseconds: 1000);  // Process 1 frame per second
+
+  // Alert timer for sound and LED
+  Timer? _alertTimer;
+  final _bluetoothService = MultiDeviceBluetoothService();
 
   @override
   void initState() {
@@ -137,6 +142,7 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
               setState(() {
                 _detectedDistance = null;
                 _currentAlert = AlertLevel.none;
+                _lastDetectedImagePath = null;
               });
             }
           }
@@ -152,11 +158,15 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
           _cameraController!,
         );
 
+        // Crop image to show detected person
+        final croppedImagePath = await _imageCropper!.cropToPerson(image.path, pose);
+
         // Update UI after consecutive detections
         if (_consecutiveDetections >= _requiredConsecutiveDetections) {
           if (mounted) {
             setState(() {
               _detectedDistance = distance;
+              _lastDetectedImagePath = croppedImagePath;
               _updateAlertLevel(distance);
             });
           }
@@ -170,6 +180,7 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
             setState(() {
               _detectedDistance = null;
               _currentAlert = AlertLevel.none;
+              _lastDetectedImagePath = null;
             });
           }
         }
@@ -203,11 +214,75 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
     if (newLevel != _currentAlert) {
       debugPrint('🚨 Alert level changed: $_currentAlert → $newLevel (distance: ${distance.toStringAsFixed(2)}m)');
       _currentAlert = newLevel;
+
+      // Start or stop alert timer based on alert level
+      _stopAlertTimer();
+      if (newLevel != AlertLevel.none) {
+        _startAlertTimer(newLevel);
+      } else {
+        // Turn off LEDs when no alert
+        _bluetoothService.sendLEDBlinkToAll(0);
+      }
+    }
+  }
+
+  /// Start alert timer for sound and LED
+  void _startAlertTimer(AlertLevel level) {
+    Duration interval;
+    int ledBlinkMode;
+
+    if (level == AlertLevel.warning3m) {
+      // 3m 이내: 0.5초 간격
+      interval = const Duration(milliseconds: 500);
+      ledBlinkMode = 2; // Fast blink
+      debugPrint('🔴 Starting fast alert (0.5s interval)');
+    } else {
+      // 3m 이상 5m 이내: 1초 간격
+      interval = const Duration(milliseconds: 1000);
+      ledBlinkMode = 1; // Slow blink
+      debugPrint('🟠 Starting slow alert (1s interval)');
+    }
+
+    // Send initial LED command
+    _bluetoothService.sendLEDBlinkToAll(ledBlinkMode);
+
+    // Play alert sound and repeat
+    _alertTimer = Timer.periodic(interval, (timer) {
+      // Play beep sound
+      FlutterRingtonePlayer().play(
+        android: AndroidSounds.notification,
+        ios: IosSounds.glass,
+        looping: false,
+        volume: 0.3,
+        asAlarm: false,
+      );
+    });
+
+    // Play initial beep immediately
+    FlutterRingtonePlayer().play(
+      android: AndroidSounds.notification,
+      ios: IosSounds.glass,
+      looping: false,
+      volume: 0.3,
+      asAlarm: false,
+    );
+  }
+
+  /// Stop alert timer
+  void _stopAlertTimer() {
+    if (_alertTimer != null) {
+      debugPrint('⏹️ Stopping alert timer');
+      _alertTimer?.cancel();
+      _alertTimer = null;
+
+      // Turn off LEDs
+      _bluetoothService.sendLEDBlinkToAll(0);
     }
   }
 
   @override
   void dispose() {
+    _stopAlertTimer();
     _cameraController?.dispose();
     _personDetector?.dispose();
     _distanceEstimator?.dispose();
@@ -288,15 +363,56 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
                   if (_detectedDistance != null)
                     Text(
                       'Distance: ${_detectedDistance!.toStringAsFixed(2)}m',
-                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                      style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
                     ),
                 ],
               ),
             ),
           ),
 
-          // Note: Image display removed for performance when using image stream
-          // Image capture from stream can be added later if needed
+          // Detected person image (zoomed in) - bottom right
+          if (_lastDetectedImagePath != null)
+            Positioned(
+              bottom: 50,
+              right: 16,
+              child: Container(
+                width: 150,
+                height: 200,
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: _currentAlert == AlertLevel.warning3m
+                        ? Colors.red
+                        : _currentAlert == AlertLevel.warning5m
+                            ? Colors.orange
+                            : Colors.green,
+                    width: 3,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.5),
+                      blurRadius: 10,
+                      spreadRadius: 2,
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(10),
+                  child: Image.file(
+                    File(_lastDetectedImagePath!),
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) {
+                      return Container(
+                        color: Colors.black54,
+                        child: const Center(
+                          child: Icon(Icons.error, color: Colors.white),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );

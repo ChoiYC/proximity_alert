@@ -5,10 +5,10 @@ import 'package:google_mlkit_pose_detection/google_mlkit_pose_detection.dart';
 import 'package:image/image.dart' as img;
 
 class ImageCropper {
-  /// Crops an image to show only the detected person with some padding
+  /// Crops an image to show the detected person's face and upper body
   Future<String?> cropToPerson(String imagePath, Pose pose) async {
     try {
-      debugPrint('🖼️ Starting image crop for: $imagePath');
+      debugPrint('🖼️ Starting face-centered crop for: $imagePath');
 
       // Read the image file
       final imageFile = File(imagePath);
@@ -22,37 +22,76 @@ class ImageCropper {
 
       debugPrint('📐 Image dimensions: ${image.width}x${image.height}');
 
-      // Calculate bounding box from all pose landmarks
-      double minX = double.infinity;
-      double maxX = double.negativeInfinity;
-      double minY = double.infinity;
-      double maxY = double.negativeInfinity;
+      // Get face landmarks (nose, eyes, ears)
+      final nose = pose.landmarks[PoseLandmarkType.nose];
+      final leftEye = pose.landmarks[PoseLandmarkType.leftEye];
+      final rightEye = pose.landmarks[PoseLandmarkType.rightEye];
+      final leftEar = pose.landmarks[PoseLandmarkType.leftEar];
+      final rightEar = pose.landmarks[PoseLandmarkType.rightEar];
+      final leftShoulder = pose.landmarks[PoseLandmarkType.leftShoulder];
+      final rightShoulder = pose.landmarks[PoseLandmarkType.rightShoulder];
+      final leftHip = pose.landmarks[PoseLandmarkType.leftHip];
+      final rightHip = pose.landmarks[PoseLandmarkType.rightHip];
 
-      int landmarkCount = 0;
-      for (final landmark in pose.landmarks.values) {
+      if (nose == null || leftShoulder == null || rightShoulder == null) {
+        debugPrint('❌ Missing critical landmarks for face crop');
+        return null;
+      }
+
+      // Calculate face center (using nose as primary reference)
+      double faceCenterX = nose.x;
+      double faceCenterY = nose.y;
+
+      // Calculate bounding box centered on face with face landmarks
+      double minX = nose.x;
+      double maxX = nose.x;
+      double minY = nose.y;
+      double maxY = nose.y;
+
+      // Include face landmarks
+      final faceLandmarks = [nose, leftEye, rightEye, leftEar, rightEar];
+      for (final landmark in faceLandmarks) {
         if (landmark != null) {
           minX = minX < landmark.x ? minX : landmark.x;
           maxX = maxX > landmark.x ? maxX : landmark.x;
           minY = minY < landmark.y ? minY : landmark.y;
           maxY = maxY > landmark.y ? maxY : landmark.y;
-          landmarkCount++;
         }
       }
 
-      debugPrint('📍 Bounding box from $landmarkCount landmarks:');
+      // Extend to include shoulders and upper torso
+      if (leftShoulder != null) {
+        minX = minX < leftShoulder.x ? minX : leftShoulder.x;
+        maxX = maxX > leftShoulder.x ? maxX : leftShoulder.x;
+        maxY = maxY > leftShoulder.y ? maxY : leftShoulder.y;
+      }
+      if (rightShoulder != null) {
+        minX = minX < rightShoulder.x ? minX : rightShoulder.x;
+        maxX = maxX > rightShoulder.x ? maxX : rightShoulder.x;
+        maxY = maxY > rightShoulder.y ? maxY : rightShoulder.y;
+      }
+
+      // Extend a bit below shoulders (30% of torso height)
+      if (leftHip != null && rightHip != null) {
+        final torsoHeight = ((leftHip.y + rightHip.y) / 2) - ((leftShoulder.y + rightShoulder.y) / 2);
+        maxY = maxY + (torsoHeight * 0.3);
+      }
+
+      debugPrint('📍 Face-centered bounding box:');
       debugPrint('   X: $minX - $maxX');
       debugPrint('   Y: $minY - $maxY');
 
-      // Add padding (20% on each side)
+      // Add generous padding for face (40% on sides, 60% on top for hair, 20% on bottom)
       final width = maxX - minX;
       final height = maxY - minY;
-      final paddingX = width * 0.2;
-      final paddingY = height * 0.2;
+      final paddingX = width * 0.4;
+      final paddingTop = height * 0.6;
+      final paddingBottom = height * 0.2;
 
       minX = (minX - paddingX).clamp(0, image.width.toDouble());
       maxX = (maxX + paddingX).clamp(0, image.width.toDouble());
-      minY = (minY - paddingY).clamp(0, image.height.toDouble());
-      maxY = (maxY + paddingY).clamp(0, image.height.toDouble());
+      minY = (minY - paddingTop).clamp(0, image.height.toDouble());
+      maxY = (maxY + paddingBottom).clamp(0, image.height.toDouble());
 
       debugPrint('📍 Padded bounding box:');
       debugPrint('   X: $minX - $maxX');

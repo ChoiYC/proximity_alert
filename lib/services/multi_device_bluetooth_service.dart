@@ -400,6 +400,36 @@ class MultiDeviceBluetoothService extends ChangeNotifier {
     }
   }
 
+  /// Send LED blink command to all connected devices
+  /// blinkInterval: 0 = off, 1 = slow (1s), 2 = fast (0.5s)
+  Future<void> sendLEDBlinkToAll(int blinkInterval) async {
+    debugPrint('💡 Sending LED blink command: $blinkInterval to all devices');
+
+    for (var position in connectedDevices) {
+      try {
+        if (position.device != null && position.isConnected) {
+          // Command format: [0xFF, blinkInterval]
+          // 0xFF is a marker to distinguish from alert commands
+          final data = [0xFF, blinkInterval];
+
+          final services = await position.device!.discoverServices();
+
+          for (var service in services) {
+            for (var characteristic in service.characteristics) {
+              if (characteristic.properties.write) {
+                await characteristic.write(data);
+                debugPrint('✅ Sent LED blink $blinkInterval to ${position.positionLabel}');
+                break;
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('❌ Error sending LED command to ${position.positionLabel}: $e');
+      }
+    }
+  }
+
   /// Subscribe to proximity data from device
   Future<void> subscribeToProximityData(int row, int col, Function(double distance) onData) async {
     final index = row * 2 + col;
