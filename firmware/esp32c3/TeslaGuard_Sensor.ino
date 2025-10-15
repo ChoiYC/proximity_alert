@@ -7,10 +7,13 @@
 #define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
 #define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
-// LED pins (Seeed Studio XIAO ESP32C3의 사용 가능한 GPIO)
-#define LED1_PIN 2
-#define LED2_PIN 3
-#define LED3_PIN 4
+// LED pins - XIAO_ESP32C3 보드의 핀 이름 사용
+// XIAO ESP32C3 핀 매핑:
+// D0 = GPIO 2, D1 = GPIO 3, D2 = GPIO 4
+// D3 = GPIO 5, D4 = GPIO 6, D5 = GPIO 7
+#define LED1_PIN D0  // GPIO 2
+#define LED2_PIN D1  // GPIO 3
+#define LED3_PIN D2  // GPIO 4
 
 BLEServer* pServer = NULL;
 BLECharacteristic* pCharacteristic = NULL;
