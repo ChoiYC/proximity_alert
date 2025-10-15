@@ -9,8 +9,8 @@ import '../services/person_detector.dart';
 import '../services/distance_estimator.dart';
 import '../services/image_cropper.dart';
 import '../services/multi_device_bluetooth_service.dart';
+import '../models/device_position.dart';
 import '../widgets/alert_overlay.dart';
-import '../widgets/device_grid_widget.dart';
 import '../screens/multi_device_bluetooth_settings_screen.dart';
 
 enum AlertLevel {
@@ -350,31 +350,33 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
             distance: _detectedDistance,
           ),
 
-          // Device grid at top
+          // Device buttons at camera corners
+          // Left bottom button (row 1, col 0) -> Top left corner
           Positioned(
-            top: 50,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: GestureDetector(
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const MultiDeviceBluetoothSettingsScreen(),
-                    ),
-                  );
-                },
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.black54,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const CompactDeviceGrid(dotSize: 35),
-                ),
-              ),
-            ),
+            top: 20,
+            left: 20,
+            child: _buildCornerDeviceButton(1, 0),
+          ),
+          
+          // Right bottom button (row 1, col 1) -> Top right corner
+          Positioned(
+            top: 20,
+            right: 20,
+            child: _buildCornerDeviceButton(1, 1),
+          ),
+          
+          // Left top button (row 0, col 0) -> Bottom left corner
+          Positioned(
+            bottom: 100,
+            left: 20,
+            child: _buildCornerDeviceButton(0, 0),
+          ),
+          
+          // Right top button (row 0, col 1) -> Bottom right corner
+          Positioned(
+            bottom: 100,
+            right: 20,
+            child: _buildCornerDeviceButton(0, 1),
           ),
 
           // Debug info
@@ -513,5 +515,82 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
         ],
       ),
     );
+  }
+
+  Widget _buildCornerDeviceButton(int row, int col) {
+    final bluetoothService = MultiDeviceBluetoothService();
+    
+    return AnimatedBuilder(
+      animation: bluetoothService,
+      builder: (context, child) {
+        final position = bluetoothService.getDeviceAt(row, col);
+        
+        return GestureDetector(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const MultiDeviceBluetoothSettingsScreen(),
+              ),
+            );
+          },
+          child: Container(
+            width: 50,
+            height: 50,
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: Colors.black54,
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: _getDeviceStatusColor(position),
+                width: 2,
+              ),
+            ),
+            child: Icon(
+              _getDeviceStatusIcon(position),
+              color: _getDeviceStatusColor(position),
+              size: 20,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Color _getDeviceStatusColor(DevicePosition position) {
+    if (!position.hasDevice) {
+      return Colors.grey;
+    } else if (!position.isConnected) {
+      return Colors.orange;
+    } else {
+      if (position.alertLevel != null && position.alertLevel! > 0) {
+        switch (position.alertLevel) {
+          case 1:
+            return Colors.yellow;
+          case 2:
+            return Colors.orange;
+          case 3:
+            return Colors.red;
+          default:
+            return Colors.green;
+        }
+      } else {
+        return Colors.green;
+      }
+    }
+  }
+
+  IconData _getDeviceStatusIcon(DevicePosition position) {
+    if (!position.hasDevice) {
+      return Icons.add;
+    } else if (!position.isConnected) {
+      return Icons.bluetooth_disabled;
+    } else {
+      if (position.alertLevel != null && position.alertLevel! > 0) {
+        return Icons.warning;
+      } else {
+        return Icons.bluetooth_connected;
+      }
+    }
   }
 }
