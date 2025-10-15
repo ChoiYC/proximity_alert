@@ -15,6 +15,19 @@
 #define LED2_PIN D1  // GPIO 3
 #define LED3_PIN D2  // GPIO 4
 
+// Piezo buzzer pin for sound alert
+#define BUZZER_PIN D3  // GPIO 5 - 피에조 스피커 제어
+
+// SLOW 모드: 낮은 주파수와 높은 주파수를 교대로 (사이렌 효과)
+#define BUZZER_FREQ_SLOW_LOW  1500  // 1.5kHz
+#define BUZZER_FREQ_SLOW_HIGH 2500  // 2.5kHz
+#define BUZZER_SLOW_INTERVAL  500   // 500ms마다 주파수 변경
+
+// FAST 모드: 더 빠른 주파수 변조
+#define BUZZER_FREQ_FAST_LOW  2000  // 2kHz
+#define BUZZER_FREQ_FAST_HIGH 4000  // 4kHz
+#define BUZZER_FAST_INTERVAL  250   // 250ms마다 주파수 변경
+
 BLEServer* pServer = NULL;
 BLECharacteristic* pCharacteristic = NULL;
 bool deviceConnected = false;
@@ -25,6 +38,10 @@ int ledBlinkMode = 0;  // 0=off, 1=slow(1s), 2=fast(0.5s)
 unsigned long lastBlinkTime = 0;
 bool ledState = false;
 int currentLedIndex = 0;  // For sequential LED pattern (0, 1, 2)
+
+// Buzzer frequency modulation variables
+unsigned long lastBuzzerFreqChange = 0;
+bool buzzerHighFreq = false;  // false=low freq, true=high freq
 
 // Connection callbacks
 class MyServerCallbacks: public BLEServerCallbacks {
@@ -41,12 +58,14 @@ class MyServerCallbacks: public BLEServerCallbacks {
       Serial.println("❌ Device Disconnected!");
       Serial.println("========================================");
 
-      // Turn off all LEDs on disconnect
+      // Turn off all LEDs and buzzer on disconnect
       digitalWrite(LED1_PIN, LOW);
       digitalWrite(LED2_PIN, LOW);
       digitalWrite(LED3_PIN, LOW);
+      noTone(BUZZER_PIN);  // 피에조 스피커 OFF
       ledBlinkMode = 0;
       currentLedIndex = 0;  // Reset sequential index
+      buzzerHighFreq = false;  // Reset buzzer state
     }
 };
 
@@ -84,20 +103,31 @@ class MyCallbacks: public BLECharacteristicCallbacks {
 
           if (ledBlinkMode == 0) {
             Serial.println("OFF");
-            // Turn off all LEDs immediately
+            // Turn off all LEDs and buzzer immediately
             digitalWrite(LED1_PIN, LOW);
             digitalWrite(LED2_PIN, LOW);
             digitalWrite(LED3_PIN, LOW);
+            noTone(BUZZER_PIN);  // 피에조 스피커 OFF
             ledState = false;
             currentLedIndex = 0;  // Reset sequential index
+            buzzerHighFreq = false;  // Reset buzzer state
             Serial.println("   ✅ LEDs turned OFF");
+            Serial.println("   ✅ Buzzer OFF");
           } else if (ledBlinkMode == 1) {
             Serial.println("SLOW (1s interval) - Sequential");
             currentLedIndex = 0;  // Reset sequential index
+            buzzerHighFreq = false;  // Start with low frequency
+            tone(BUZZER_PIN, BUZZER_FREQ_SLOW_LOW);  // 1.5kHz로 시작
+            lastBuzzerFreqChange = millis();
             Serial.println("   ✅ LED blink mode set to SLOW (LED1 → LED2 → LED3)");
+            Serial.println("   ✅ Buzzer ON (1.5kHz-2.5kHz siren)");
           } else if (ledBlinkMode == 2) {
             Serial.println("FAST (0.5s interval) - All Together");
+            buzzerHighFreq = false;  // Start with low frequency
+            tone(BUZZER_PIN, BUZZER_FREQ_FAST_LOW);  // 2kHz로 시작
+            lastBuzzerFreqChange = millis();
             Serial.println("   ✅ LED blink mode set to FAST (All LEDs blink)");
+            Serial.println("   ✅ Buzzer ON (2kHz-4kHz siren)");
           } else {
             Serial.print("UNKNOWN (");
             Serial.print(ledBlinkMode);
@@ -131,11 +161,13 @@ void setup() {
   pinMode(LED1_PIN, OUTPUT);
   pinMode(LED2_PIN, OUTPUT);
   pinMode(LED3_PIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
 
-  // Turn off all LEDs initially
+  // Turn off all LEDs and buzzer initially
   digitalWrite(LED1_PIN, LOW);
   digitalWrite(LED2_PIN, LOW);
   digitalWrite(LED3_PIN, LOW);
+  noTone(BUZZER_PIN);  // 피에조 스피커 OFF
 
   Serial.println("\n\n");
   Serial.println("========================================");
@@ -190,28 +222,34 @@ void setup() {
   Serial.print("📱 MAC Address: ");
   Serial.println(BLEDevice::getAddress().toString().c_str());
   Serial.println("========================================");
-  Serial.println("💡 LED Pins: GPIO2, GPIO3, GPIO4");
+  Serial.println("💡 LED Pins: D0(GPIO2), D1(GPIO3), D2(GPIO4)");
+  Serial.println("🔊 Buzzer Pin: D3(GPIO5) - Piezo speaker");
   Serial.println("========================================");
 
-  // LED hardware test
-  Serial.println("🧪 Testing LED hardware...");
-  Serial.println("   Turning all LEDs ON for 2 seconds...");
+  // LED and Buzzer hardware test
+  Serial.println("🧪 Testing LED and Buzzer hardware...");
+  Serial.println("   Turning all LEDs ON and Buzzer beep for 2 seconds...");
   digitalWrite(LED1_PIN, HIGH);
   digitalWrite(LED2_PIN, HIGH);
   digitalWrite(LED3_PIN, HIGH);
+  tone(BUZZER_PIN, 2000);  // 2kHz 테스트 톤
   delay(2000);
 
-  Serial.println("   Turning all LEDs OFF...");
+  Serial.println("   Turning all LEDs and Buzzer OFF...");
   digitalWrite(LED1_PIN, LOW);
   digitalWrite(LED2_PIN, LOW);
   digitalWrite(LED3_PIN, LOW);
+  noTone(BUZZER_PIN);
   delay(500);
 
-  Serial.println("✅ LED hardware test complete!");
+  Serial.println("✅ LED and Buzzer hardware test complete!");
   Serial.println("   If LEDs didn't light up, check:");
   Serial.println("   1. LED polarity (long leg = +, short leg = -)");
   Serial.println("   2. Resistor (220Ω-1kΩ) in series with each LED");
   Serial.println("   3. GND connection to ESP32C3 GND pin");
+  Serial.println("   If Buzzer didn't sound, check:");
+  Serial.println("   1. Piezo buzzer + pin connected to D3 (GPIO5)");
+  Serial.println("   2. Piezo buzzer - pin connected to ESP32C3 GND");
   Serial.println("========================================");
   Serial.println("⏳ Waiting for connection from app...");
   Serial.println("========================================");
@@ -280,6 +318,51 @@ void updateLEDs() {
   }
 }
 
+void updateBuzzer() {
+  if (ledBlinkMode == 0) {
+    // Buzzer off
+    return;
+  }
+
+  // Determine frequency change interval based on mode
+  unsigned long freqInterval;
+  int lowFreq, highFreq;
+
+  if (ledBlinkMode == 1) {
+    // SLOW mode
+    freqInterval = BUZZER_SLOW_INTERVAL;  // 500ms
+    lowFreq = BUZZER_FREQ_SLOW_LOW;
+    highFreq = BUZZER_FREQ_SLOW_HIGH;
+  } else {
+    // FAST mode
+    freqInterval = BUZZER_FAST_INTERVAL;  // 250ms
+    lowFreq = BUZZER_FREQ_FAST_LOW;
+    highFreq = BUZZER_FREQ_FAST_HIGH;
+  }
+
+  // Check if it's time to change frequency
+  if (millis() - lastBuzzerFreqChange >= freqInterval) {
+    buzzerHighFreq = !buzzerHighFreq;  // Toggle between high and low
+
+    int newFreq = buzzerHighFreq ? highFreq : lowFreq;
+    tone(BUZZER_PIN, newFreq);
+
+    // Debug output
+    unsigned long currentTime = millis();
+    Serial.print("[");
+    Serial.print(currentTime / 1000);
+    Serial.print(".");
+    Serial.print(currentTime % 1000);
+    Serial.print("s] 🔊 Buzzer: ");
+    Serial.print(newFreq);
+    Serial.print("Hz (");
+    Serial.print(buzzerHighFreq ? "HIGH" : "LOW");
+    Serial.println(")");
+
+    lastBuzzerFreqChange = millis();
+  }
+}
+
 void loop() {
   // Handle connection state changes
   if (deviceConnected && !oldDeviceConnected) {
@@ -295,9 +378,10 @@ void loop() {
     oldDeviceConnected = deviceConnected;
   }
 
-  // Update LED blinking
+  // Update LED blinking and buzzer frequency
   if (deviceConnected) {
     updateLEDs();
+    updateBuzzer();
   }
 
   // Status update every 5 seconds when not connected
