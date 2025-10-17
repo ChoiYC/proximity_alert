@@ -109,7 +109,9 @@ class _MultiDeviceBluetoothSettingsScreenState
                           children: [
                             Text(
                               'Bluetooth',
-                              style: Theme.of(context).textTheme.titleLarge,
+                              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                color: Colors.blue,
+                              ), 
                             ),
                             Text(
                               _isBluetoothOn ? 'On' : 'Off',
@@ -240,7 +242,10 @@ class _MultiDeviceBluetoothSettingsScreenState
                       children: [
                         Text(
                           'Device Grid',
-                          style: Theme.of(context).textTheme.titleLarge,
+                          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            color: Colors.grey.shade700,
+                          ), 
+                          
                         ),
                         const SizedBox(height: 8),
                         Text(

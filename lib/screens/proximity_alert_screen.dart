@@ -350,39 +350,68 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
             distance: _detectedDistance,
           ),
 
+          // Device Grid Settings button - top center
+          Positioned(
+            top: 20,
+            right: 20,
+
+            child: IconButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const MultiDeviceBluetoothSettingsScreen(),
+                  ),
+                );
+              },
+              // child: const Text(
+              //   'Device Grid Settings',
+              //   style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+              // ),
+                icon: Icon(
+                  Icons.settings,
+                  size: 40,
+                  color: Colors.white,
+                ),
+            ),
+
+          ),
+
           // Device buttons at camera corners
           // Left bottom button (row 1, col 0) -> Top left corner
           Positioned(
-            top: 20,
+            top: 200,
             left: 20,
             child: _buildCornerDeviceButton(1, 0),
           ),
           
           // Right bottom button (row 1, col 1) -> Top right corner
           Positioned(
-            top: 20,
+            top: 200,
             right: 20,
             child: _buildCornerDeviceButton(1, 1),
           ),
           
           // Left top button (row 0, col 0) -> Bottom left corner
           Positioned(
-            bottom: 100,
+            bottom: 200,
             left: 20,
             child: _buildCornerDeviceButton(0, 0),
           ),
           
           // Right top button (row 0, col 1) -> Bottom right corner
           Positioned(
-            bottom: 100,
+            bottom: 200,
             right: 20,
             child: _buildCornerDeviceButton(0, 1),
           ),
 
           // Debug info
           Positioned(
-            top: 180,
-            left: 16,
+            top: 200,
+            left: 0,
+            right: 0,
+            child: Center(
             child: Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
@@ -401,22 +430,25 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
                       'Distance: ${_detectedDistance!.toStringAsFixed(2)}m',
                       style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
                     ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
 
-          // LED Test buttons - bottom left
+          // LED Test buttons - bottom center
           Positioned(
             bottom: 50,
-            left: 16,
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.black87,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.blue, width: 2),
-              ),
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.blue, width: 2),
+                ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -424,51 +456,56 @@ class _ProximityAlertScreenState extends State<ProximityAlertScreen> {
                     'LED Test',
                     style: TextStyle(
                       color: Colors.white,
-                      fontSize: 12,
+                      fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   const SizedBox(height: 8),
-                  ElevatedButton(
-                    onPressed: () {
-                      debugPrint('🔵 TEST: Sending LED OFF command');
-                      _bluetoothService.sendLEDBlinkToAll(0);
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.grey,
-                      minimumSize: const Size(80, 36),
-                    ),
-                    child: const Text('OFF', style: TextStyle(fontSize: 12)),
-                  ),
-                  const SizedBox(height: 4),
-                  ElevatedButton(
-                    onPressed: () {
-                      debugPrint('🟠 TEST: Sending LED SLOW command');
-                      _bluetoothService.sendLEDBlinkToAll(1);
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.orange,
-                      minimumSize: const Size(80, 36),
-                    ),
-                    child: const Text('SLOW', style: TextStyle(fontSize: 12)),
-                  ),
-                  const SizedBox(height: 4),
-                  ElevatedButton(
-                    onPressed: () {
-                      debugPrint('🔴 TEST: Sending LED FAST command');
-                      _bluetoothService.sendLEDBlinkToAll(2);
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.red,
-                      minimumSize: const Size(80, 36),
-                    ),
-                    child: const Text('FAST', style: TextStyle(fontSize: 12)),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ElevatedButton(
+                        onPressed: () {
+                          debugPrint('🔵 TEST: Sending LED OFF command');
+                          _bluetoothService.sendLEDBlinkToAll(0);
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.grey,
+                          minimumSize: const Size(60, 32),
+                        ),
+                        child: const Text('OFF', style: TextStyle(fontSize: 11, color: Colors.black, fontWeight: FontWeight.bold)),
+                      ),
+                      const SizedBox(width: 6),
+                      ElevatedButton(
+                        onPressed: () {
+                          debugPrint('🟠 TEST: Sending LED SLOW command');
+                          _bluetoothService.sendLEDBlinkToAll(1);
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.orange,
+                          minimumSize: const Size(60, 32),
+                        ),
+                        child: const Text('SLOW', style: TextStyle(fontSize: 11, color: Colors.black, fontWeight: FontWeight.bold)),
+                      ),
+                      const SizedBox(width: 6),
+                      ElevatedButton(
+                        onPressed: () {
+                          debugPrint('🔴 TEST: Sending LED FAST command');
+                          _bluetoothService.sendLEDBlinkToAll(2);
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red,
+                          minimumSize: const Size(60, 32),
+                        ),
+                        child: const Text('FAST', style: TextStyle(fontSize: 11, color: Colors.black, fontWeight: FontWeight.bold)),
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
           ),
-
+          ),
           // Detected person image (zoomed in) - bottom right
           if (_lastDetectedImagePath != null)
             Positioned(
